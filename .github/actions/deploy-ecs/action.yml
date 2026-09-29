@@ -1,0 +1,39 @@
+name: Deploy to ECS
+description: Update ECS task definition and deploy new revision with stability wait
+inputs:
+  image_tag:
+    description: Container image tag to deploy
+    required: true
+  environment:
+    description: Target environment (dev/staging/prod)
+    required: true
+  service_name:
+    description: Service name
+    required: true
+  ecs_cluster:
+    description: ECS cluster name
+    required: true
+  ecs_service:
+    description: ECS service name
+    required: true
+runs:
+  using: composite
+  steps:
+  - name: Download task definition
+    shell: bash
+    run: "aws ecs describe-task-definition \\\n  --task-definition ${{ inputs.ecs_service\
+      \ }}-${{ inputs.environment }} \\\n  --query taskDefinition > task-definition.json"
+  - name: Update image in task definition
+    id: task-def
+    uses: aws-actions/amazon-ecs-render-task-definition@v1
+    with:
+      task-definition: task-definition.json
+      container-name: ${{ inputs.service_name }}
+      image: ${{ inputs.image_tag }}
+  - name: Deploy to ECS
+    uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+    with:
+      task-definition: ${{ steps.task-def.outputs.task-definition }}
+      service: ${{ inputs.ecs_service }}
+      cluster: ${{ inputs.ecs_cluster }}
+      wait-for-service-stability: 'true'
