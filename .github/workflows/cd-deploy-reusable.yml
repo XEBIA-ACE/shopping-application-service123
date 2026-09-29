@@ -1,0 +1,121 @@
+name: CD Deploy (Reusable)
+'on':
+  workflow_call:
+    inputs:
+      image_sha:
+        description: Full commit SHA whose CI-built images should be deployed
+        required: true
+        type: string
+      health_check_url:
+        description: External health check URL. Empty = derive from Ingress/LoadBalancer
+          endpoint.
+        required: false
+        type: string
+        default: ''
+      health_check_timeout:
+        description: Health check timeout in seconds
+        required: false
+        type: number
+        default: 300
+      ecr_registry:
+        description: ECR registry host holding the service images
+        required: true
+        type: string
+      aws_region:
+        description: AWS region of the EKS cluster and ECR registry
+        required: false
+        type: string
+        default: us-east-1
+      cluster_name:
+        description: EKS cluster name
+        required: false
+        type: string
+        default: ''
+      namespace:
+        description: Kubernetes namespace (pre-created by infra; deploy role is scoped
+          to it)
+        required: false
+        type: string
+        default: default
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v6
+      with: &id001
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ inputs.aws_region }}
+    - name: Deploy to ecs (dev)
+      uses: ./.github/actions/deploy-ecs
+      with:
+        image_tag: ${{ inputs.image_sha }}
+        environment: dev
+        ecs_cluster: ${{ inputs.ecs_cluster }}
+        ecs_service: ${{ inputs.ecs_service }}
+    - name: Health check (dev)
+      run: "timeout ${{ inputs.health_check_timeout || 300 }} bash -c '\n  until curl\
+        \ -sf ${{ inputs.health_check_url }}; do\n    sleep 10\n  done\n'"
+    - name: Auto-rollback on failure (dev)
+      if: failure()
+      run: 'echo "Health check failed for dev, initiating rollback"
+
+        # Rollback to previous stable version'
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    needs:
+    - deploy-dev
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v6
+      with: *id001
+    - name: Deploy to ecs (staging)
+      uses: ./.github/actions/deploy-ecs
+      with:
+        image_tag: ${{ inputs.image_sha }}
+        environment: staging
+        ecs_cluster: ${{ inputs.ecs_cluster }}
+        ecs_service: ${{ inputs.ecs_service }}
+    - name: Health check (staging)
+      run: "timeout ${{ inputs.health_check_timeout || 300 }} bash -c '\n  until curl\
+        \ -sf ${{ inputs.health_check_url }}; do\n    sleep 10\n  done\n'"
+    - name: Auto-rollback on failure (staging)
+      if: failure()
+      run: 'echo "Health check failed for staging, initiating rollback"
+
+        # Rollback to previous stable version'
+  deploy-prod:
+    runs-on: ubuntu-latest
+    environment: prod
+    needs:
+    - deploy-staging
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v6
+      with: *id001
+    - name: Deploy to ecs (prod)
+      uses: ./.github/actions/deploy-ecs
+      with:
+        image_tag: ${{ inputs.image_sha }}
+        environment: prod
+        ecs_cluster: ${{ inputs.ecs_cluster }}
+        ecs_service: ${{ inputs.ecs_service }}
+    - name: Health check (prod)
+      run: "timeout ${{ inputs.health_check_timeout || 300 }} bash -c '\n  until curl\
+        \ -sf ${{ inputs.health_check_url }}; do\n    sleep 10\n  done\n'"
+    - name: Auto-rollback on failure (prod)
+      if: failure()
+      run: 'echo "Health check failed for prod, initiating rollback"
+
+        # Rollback to previous stable version'

@@ -1,0 +1,19 @@
+name: Security Scanning
+'on':
+  pull_request:
+    branches:
+    - main
+    - master
+  schedule:
+  - cron: 0 6 * * 1
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+jobs:
+  security-scan:
+    uses: ./.github/workflows/security-scanning-reusable.yml
+    with:
+      scan_types: sca,container,sast,iac,sbom
+    secrets: inherit
